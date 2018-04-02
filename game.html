@@ -102,7 +102,7 @@ var saveAs=saveAs||navigator.msSaveBlob&&navigator.msSaveBlob.bind(navigator)||f
 		<div id="init-lacking">Your browser lacks required capabilities. Please upgrade it or switch to another to continue.</div>
 		<div id="init-loading"><div>Loading&hellip;</div></div>
 	</div>
-	<div id="store-area" hidden><tw-storydata name="Cactus Museum" startnode="1" creator="Twine" creator-version="2.2.1" ifid="2914E6BD-9FA8-4580-B4AC-883396C801A6" zoom="1" format="SugarCube" format-version="2.20.0" options="" hidden><style role="stylesheet" id="twine-user-stylesheet" type="text/twine-css">* { box-sizing: border-box; }
+	<div id="store-area" hidden><tw-storydata name="Cactus Museum" startnode="1" creator="Twine" creator-version="2.2.1" ifid="2914E6BD-9FA8-4580-B4AC-883396C801A6" zoom="1" format="SugarCube" format-version="2.21.0" options="" hidden><style role="stylesheet" id="twine-user-stylesheet" type="text/twine-css">* { box-sizing: border-box; }
 
 .dirt {
   color: blue;
@@ -111,10 +111,14 @@ var saveAs=saveAs||navigator.msSaveBlob&&navigator.msSaveBlob.bind(navigator)||f
 
 .dirt:hover { cursor: pointer; }
 
+.gallery {
+  display: flex;
+  flex-wrap: wrap;
+}
+
 .exhibit {
-  display: inline-block;
+  flex: 1 0 auto;
   border: 1px solid blue;
-  width: 32%;
   padding: 0 8px;
 }
 
@@ -123,17 +127,30 @@ var saveAs=saveAs||navigator.msSaveBlob&&navigator.msSaveBlob.bind(navigator)||f
   font-size: 16px;
 }
 
+.current-inventory {
+  flex-basis: 100%;
+}
+
 .slot {
   border: 2px dashed grey;
-  padding: 4px;
   height: 50px;
   margin-bottom: 8px;
+  transition: opacity 0.2s ease-in-out;
 }
 
 .slot.over { opacity: 0.4; }
-.slot .item { position: relative; }
-.slot .item:hover { cursor: move; }
-.item-name:hover + .item-description {
+
+.slot .item {
+  position: relative;
+  padding: 4px;
+  overflow: hidden;
+  height: -webkit-fill-available;
+}
+.slot .item:hover { 
+  cursor: move;
+  overflow: visible;
+}
+.item:hover .item-description {
   opacity: 1;
 }
 
@@ -146,7 +163,7 @@ var saveAs=saveAs||navigator.msSaveBlob&&navigator.msSaveBlob.bind(navigator)||f
   border: 2px solid white;
   border-radius: 4px;
   padding: 4px;
-  bottom: 30px;
+  bottom: 50px;
   left: -2px;
   transition: opacity 0.2s ease-in-out;
 }
@@ -159,30 +176,88 @@ var saveAs=saveAs||navigator.msSaveBlob&&navigator.msSaveBlob.bind(navigator)||f
   /* Required to make elements draggable in old WebKit */
   -khtml-user-drag: element;
   -webkit-user-drag: element;
-}</style><script role="script" id="twine-user-script" type="text/twine-javascript">function getItemDescription(itemName) {
+}</style><script role="script" id="twine-user-script" type="text/twine-javascript">let grabbedItem = null;
+let originExhibit = null;
+let newExhibit = null;
+let dragSrcEl = null;
+
+function getItemDescription(itemName) {
 	const formattedName = itemName.charAt(0).toUpperCase() + itemName.slice(1);
 	return Story.get(formattedName).description();
 };
+
+function getItemIndex(itemName, exhibitName) {
+	return State.variables[exhibitName].indexOf(itemName);
+};
+
+// Because the drag event is lost otherwise
+jQuery('body').on('dragstart', '.item', function(e) {
+	originExhibit = jQuery(this).parent().attr('data-exhibit');
+	grabbedItem = jQuery(this).attr('data-name');
+	dragSrcEl = this;
+	e.originalEvent.dataTransfer.effectAllowed = 'move';
+	e.originalEvent.dataTransfer.setData('text', this.outerHTML);
+});
 
 Macro.add("itemSlot", {
 	tags: null,
 	handler : function () {
 		const content = this.payload[0].contents;
-		const el = document.createElement('div')
+		const exhibit = this.args[0];
+		const el = document.createElement('div');
 		jQuery(el)
 			.addClass('slot')
-			.appendTo(this.output)
+			.attr('data-exhibit', exhibit)
 			.on('dragenter', function() {
-				// jQuery(this).addClass('over');
+				jQuery(this).addClass('over');
+			})
+			.on('dragover', function(e) {
+				e.preventDefault();
+				e.originalEvent.dataTransfer.dropEffect = 'move';
 			})
 			.on('dragleave', function() {
-				// jQuery(this).removeClass('over');
+				jQuery(this).removeClass('over');
 			})
+			.on('drop', function(e) {
+				e.stopPropagation();
+				const currentInventory = State.variables.currentInventory;
+				const data = e.originalEvent.dataTransfer.getData('text');
+				const grabbedItemIndex = currentInventory.indexOf(grabbedItem) >= 0 ? currentInventory.indexOf(grabbedItem) : getItemIndex(grabbedItem, originExhibit);
+				const replacedItem = this.innerHTML;
+				const replacedItemName = jQuery(replacedItem).attr('data-name');
+
+				State.variables[exhibit].push(grabbedItem);
+
+				// It's coming from the inventory
+				if (currentInventory.indexOf(grabbedItem) >= 0) {
+					currentInventory.splice(grabbedItemIndex, 1);
+					jQuery(`.current-inventory .${grabbedItem}`).parent().remove();
+
+				// It's moving exhibits
+				} else if (replacedItemName === undefined && currentInventory.indexOf(grabbedItem) < 0) {
+					dragSrcEl.outerHTML = 'Empty Spot';
+					State.variables[originExhibit].splice(grabbedItemIndex, 1);
+				}
+
+				// It's replacing an item
+				if (replacedItemName){
+					const replacedItemIndex = getItemIndex(replacedItemName, exhibit);
+					State.variables[exhibit].splice(replacedItemIndex, 1);
+					State.variables[originExhibit].splice(grabbedItemIndex, 1);
+					State.variables[originExhibit].push(replacedItemName);
+					dragSrcEl.outerHTML = this.innerHTML;
+				}
+
+				jQuery(this).removeClass('over');
+				this.innerHTML = data;
+
+				originExhibit = null;
+				grabbedItem = null;
+			})
+			.appendTo(this.output)
 			.wiki(content);
 	}
 });
-
-var dragSrcEl = null;
 
 Macro.add("draggableItem", {
 	skipArgs : false,
@@ -192,54 +267,23 @@ Macro.add("draggableItem", {
 		const el = document.createElement('div');
 		
 		jQuery(el)
-			.on('dragstart', function(e) {
-				console.log('helloooo');
-				jQuery(this).css('opacity', 0.4);
-			
-				dragSrcEl = this;
-			
-				e.dataTransfer.effectAllowed = 'move';
-				e.dataTransfer.setData('text/html', this.innerHTML);
-			})
-			.on('drop', function(e) {
-				console.log('drop');
-				console.log(e);
-				// if (e.stopPropagation) e.stopPropagation();
-			
-				if (dragSrcEl != this) {
-					dragSrcEl.innerHTML = this.innerHTML;
-					this.innerHTML = e.dataTransfer.getData('text/html');
-				}
-			
-				// return false;
-			})
-			.on('dragover', function(e) {
-				console.log(e);
-				// if (e.preventDefault) e.preventDefault();
-			
-				e.dataTransfer.dropEffect = 'move';
-			
-				// return false;
-			})
-			.on('dragend', function() {
-				console.log('ended');
-			})
 			.attr('draggable', 'true')
-			.addClass('item')
+			.attr('data-name', item)
+			.addClass(`item ${item}`)
 			.html(`<span class="item-name">${item}</span><span class="item-description">${itemDesc}</span>`)
 			.appendTo(this.output);
 	}
 });
 
 Macro.add("getItemPos", {
-    skipArgs : false,
-    handler  : function () {
-			const itemToGet = this.args[0];
-			const itemPos = State.variables.dioramas.indexOf(itemToGet);
-			const humanPos = parseInt(itemPos) + 1;
+	skipArgs : false,
+	handler  : function () {
+		const itemToGet = this.args[0];
+		const itemPos = State.variables.dioramas.indexOf(itemToGet);
+		const humanPos = parseInt(itemPos) + 1;
 
-			return jQuery(this.output).wiki(`Diorama ${humanPos}`);
-    }
+		return jQuery(this.output).wiki(`Diorama ${humanPos}`);
+	}
 });
 
 Macro.add("getItemDescription", {
@@ -333,6 +377,7 @@ It feels lonely.
 [[Dig Up Dirt|You dug up intro][$currentInventory.push(&#39;feather&#39;)]]
 &lt;&lt;/for&gt;&gt;</tw-passagedata><tw-passagedata pid="8" name="You dug up intro" tags="" position="116,804" size="100,100">&lt;&lt;nobr&gt;&gt;
 &lt;&lt;set $doodoPiece.push(&#39;feather&#39;)&gt;&gt;
+&lt;&lt;set $currentInventory.splice(0, 1)&gt;&gt;
 You dug up: a feather!
 &lt;&lt;/nobr&gt;&gt;
 
@@ -363,13 +408,13 @@ Oh, what&#39;s this? Looks like you&#39;ve received a letter from someone who ap
 [[Go to gallery |Gallery]]
 [[Read letters |Letters Archive]]</tw-passagedata><tw-passagedata pid="13" name="Dig Site" tags="" position="938,277" size="100,100">&lt;&lt;for _i to 0; _i lt $itemsToDig.length; _i++&gt;&gt;
 &lt;&lt;digUpItem _i&gt;&gt;
-&lt;&lt;/for&gt;&gt;</tw-passagedata><tw-passagedata pid="14" name="Gallery" tags="" position="585,276" size="100,100">Your galleries:
-
+&lt;&lt;/for&gt;&gt;</tw-passagedata><tw-passagedata pid="14" name="Gallery" tags="" position="585,277" size="100,100">Your galleries:
 &lt;&lt;nobr&gt;&gt;
+&lt;div class=&quot;gallery&quot;&gt;
 &lt;div class=&quot;exhibit doodo&quot;&gt;
 	&lt;h2&gt;The Doodo Exhibit&lt;/h2&gt;
 	&lt;&lt;for _i to 0; _i lt 3; _i++&gt;&gt;
-	&lt;&lt;itemSlot&gt;&gt;
+	&lt;&lt;itemSlot &quot;doodoPiece&quot;&gt;&gt;
 		&lt;&lt;if !$doodoPiece[_i]&gt;&gt;
 		  Empty Spot
 		&lt;&lt;else&gt;&gt;
@@ -382,7 +427,7 @@ Oh, what&#39;s this? Looks like you&#39;ve received a letter from someone who ap
 &lt;div class=&quot;exhibit orbula&quot;&gt;
 	&lt;h2&gt;The Orbula Exhibit&lt;/h2&gt;
 	&lt;&lt;for _i to 0; _i lt 3; _i++&gt;&gt;
-	&lt;&lt;itemSlot&gt;&gt;
+	&lt;&lt;itemSlot &quot;orbulaPiece&quot;&gt;&gt;
 		&lt;&lt;if !$orbulaPiece[_i]&gt;&gt;
 		  Empty Spot
 		&lt;&lt;else&gt;&gt;
@@ -395,7 +440,7 @@ Oh, what&#39;s this? Looks like you&#39;ve received a letter from someone who ap
 &lt;div class=&quot;exhibit swohum&quot;&gt;
 	&lt;h2&gt;The Swohum Exhibit&lt;/h2&gt;
 	&lt;&lt;for _i to 0; _i lt 3; _i++&gt;&gt;
-	&lt;&lt;itemSlot&gt;&gt;
+	&lt;&lt;itemSlot &quot;swohumPiece&quot;&gt;&gt;
 		&lt;&lt;if !$swohumPiece[_i]&gt;&gt;
 		  Empty Spot
 		&lt;&lt;else&gt;&gt;
@@ -407,10 +452,11 @@ Oh, what&#39;s this? Looks like you&#39;ve received a letter from someone who ap
 
 &lt;div class=&quot;current-inventory&quot;&gt;
 &lt;&lt;for _i to 0; _i lt $currentInventory.length; _i++&gt;&gt;
-  &lt;&lt;itemSlot&gt;&gt;
+  &lt;div class=&quot;slot&quot;&gt;
 	&lt;&lt;draggableItem $currentInventory[_i]&gt;&gt;
-  &lt;&lt;/itemSlot&gt;&gt;
+  &lt;/div&gt;
 &lt;&lt;/for&gt;&gt;
+&lt;/div&gt;
 &lt;/div&gt;
 &lt;&lt;/nobr&gt;&gt;
 
